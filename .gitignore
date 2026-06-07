@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.python-version
+
+# Poetry
+.venv/
+poetry.lock
+
+# Docker
+.dockervenv/
+**/docker-compose.override.yml
+
+# Environment variables and secret files
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.dylib
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# mypy
+.mypy_cache/
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Editor directories and files
+*.swp
+*.swo
+*~
