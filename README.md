@@ -22,6 +22,9 @@ FastAPIの学習を目的として作成したTODOアプリ。
 todo-app-py-01
 ├─ /.dockervenv        # Docker コンテナ用の仮想環境
 ├─ /.venv              # ローカル環境の仮想環境
+├─ api
+│   ├─ __init__.py
+│   └─ main.py
 ├─ .gitattributes
 ├─ .gitignore
 ├─ docker-compose.yaml
@@ -70,6 +73,17 @@ todo-app-py-01
     ```
 1. インストール完了後、`poetry.lock` がプロジェクトディレクトリ直下に作成されたことを確認する
 
+### FastAPIを実行
+1. プロジェクトディレクトリの直下に `api` ディレクトリを作成する
+1. `api/__init__.py`と `api/main.py`を作成する
+1. 下記コマンドを実行し、サーバーを立ち上げる
+    ```bash
+    $ docker compose up
+    ```
+1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
+1. `Execute` をクリックし、`{"message": "hello world!"}`が返ることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/11201b29b3a86068cd5724ddda310268.gif)](https://gyazo.com/11201b29b3a86068cd5724ddda310268)
+
 ## 補足説明
 ### Docker関連ファイル
 |ファイル名|役割|
@@ -78,40 +92,56 @@ todo-app-py-01
 |Dockerfile|Dockerイメージの設計図。Python環境の作成やライブラリのインストール手順を定義する。|
 
 ### Docker構成
+#### ファイル構成・volume同期
 ```
 ホスト(Mac)
 todo-app-py-01 (プロジェクトフォルダ)  <────────────────────────────────────────────────────────────────┐
-│                                                                                                    | /src と同期
-├─ /.venv                                                                                            | (設定: volumes の .:/src)
-├─ docker-compose.yaml                                                                               |
-├─ Dockerfile                                                                                        |
-├─ poetry.lock                                                                                       |
-├─ pyproject.toml                                                                                    |
-│                                                                                                    |
-├─ /.dockervenv                     <────────────────────┐                                           |
-│                                                        | /src/.venv と同期                          |
-│                                                        | (設定: volumes の .dockervenv:/src/.venv)  |
-└─ localhost:8000                   ─────┐               |                                           |
-                                         | 通信           |                                           |
-                                         | (設定: ports)  |                                           |
-Dockerコンテナ (demo-app)                 |               |                                           |
-│                                        |               |                                           |
-├─ FastAPIプロセス(後続で実装予定)      <────┘               |                                           |
-│   └─ 8000番ポートで待ち受け                               |                                           |
-│                                                        |                                           |
-├─ /src/.venv                       <────────────────────┘                                           |
-│                                                                                                    |
+│                                                                                                    │ /src と同期
+├─ /.venv                                                                                            │ (設定: volumes の .:/src)
+├─ docker-compose.yaml                                                                               │
+├─ Dockerfile                                                                                        │
+├─ poetry.lock                                                                                       │
+├─ pyproject.toml                                                                                    │
+│                                                                                                    │
+└─ /.dockervenv                     <────────────────────┐                                           │
+                                                         │ /src/.venv と同期                          │
+                                                         │ (設定: volumes の .dockervenv:/src/.venv)  │
+Dockerコンテナ (demo-app)                                 │                                           │
+│                                                        │                                           │
+├─ /src/.venv                       <────────────────────┘                                           │
+│                                                                                                    │
 └─ /src                             <────────────────────────────────────────────────────────────────┘
-    ├─ app  ※ FastAPIの実体は、/src/appのコード (appディレクトリは後続で作成)
+    ├─ api
+    │    ├─ __init__.py
+    │    └─ main.py        <- FastAPIアプリを定義
     ├─ docker-compose.yaml
     ├─ Dockerfile
     └─ pyproject.toml
 ```
 
 - volumes はホストとコンテナでファイルを同期する仕組み
+- コードを修正すると volumes によりコンテナ側にも即時反映される
+
+#### ネットワーク通信
+```
+ブラウザ
+    │
+    ▼
+http://localhost:8000
+    │ 通信
+    │ (設定: ports)
+    ▼
+Dockerコンテナ(demo-app)
+    │
+    ▼
+uvicorn
+    │
+    ▼
+FastAPI(api/main.py)
+```
+
 - ports はホストとコンテナで通信する仕組み
 - FastAPIはコンテナ内で動作する
-- コードを修正すると volumes によりコンテナ側にも即時反映される
 
 ### `poetry init` コマンド
 `pyproject.toml` を生成し、FastAPI本体とASGIサーバーである `uvicorn` を依存関係として登録する。
