@@ -24,7 +24,11 @@ todo-app-py-01
 ├─ /.venv              # ローカル環境の仮想環境
 ├─ api
 │   ├─ __init__.py
-│   └─ main.py
+│   ├─ main.py
+│   └─ routers
+│       ├─ __init__.py
+│       ├─ done.py
+│       └─ task.py
 ├─ .gitattributes
 ├─ .gitignore
 ├─ docker-compose.yaml
@@ -83,6 +87,13 @@ todo-app-py-01
 1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
 1. `Execute` をクリックし、`{"message": "hello world!"}`が返ることを確認する
     [![Image from Gyazo](https://i.gyazo.com/11201b29b3a86068cd5724ddda310268.gif)](https://gyazo.com/11201b29b3a86068cd5724ddda310268)
+
+### ルーター実装
+1. apiディレクトリに `__init__.py` と `task.py` と `done.py` を作成する
+1. `main.py` を編集する
+1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
+1. ６つのパスオペレーション関数に対応するエンドポイントが表示されることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/bf9e9aab6fd65a27e127c7783e3f574a.png)](https://gyazo.com/bf9e9aab6fd65a27e127c7783e3f574a)
 
 ## 補足説明
 ### Docker関連ファイル
@@ -145,3 +156,9 @@ FastAPI(api/main.py)
 
 ### `poetry init` コマンド
 `pyproject.toml` を生成し、FastAPI本体とASGIサーバーである `uvicorn` を依存関係として登録する。
+
+## Router構成
+1ファイルに全てのパスオペレーション関数を定義すると、可読性などが低下する。
+そのため、リソースごとにファイルを分ける。
+
+今回のケースだと、`/tasks` と `/tasks/{task_id}/done` の2つに大別できる。
