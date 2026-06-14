@@ -41,6 +41,9 @@ todo-app-py-01
 │   └─ schemas
 │       ├─ __init__.py
 │       └─ task.py
+├─ tests
+│   ├─ __init__.py
+│   └─ test_main.py
 ├─ .gitattributes
 ├─ .gitignore
 ├─ docker-compose.yaml
@@ -156,7 +159,7 @@ todo-app-py-01
     ```
 1. 下記コマンドを実行し、サーバーを立ち上げる
     ```bash
-    $ docker compose up
+    $ docker compose up -d
     ```
 1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
 1. `Execute` をクリックし、`{"message": "hello world!"}`が返ることを確認する
@@ -412,12 +415,12 @@ todo-app-py-01
     ```
 1. 下記コマンドを実行し、サーバーとSQLを同時に立ち上げる
     ```bash
-    $ docker compose up
+    $ docker compose up -d
     ```
 1. 別のコンソールを開く
 1. プロジェクトディレクトリで下記コマンドを実行し、MySQLクライアントが実行されて、DBに接続できていることを確認する
     ```bash
-    % docker-compose exec db mysql demo
+    % docker compose exec db mysql demo
     Welcome to the MySQL monitor.  Commands end with ; or \g.
     Your MySQL connection id is 8
     Server version: 8.0.46 MySQL Community Server - GPL
@@ -434,7 +437,7 @@ todo-app-py-01
     ```
 1. 下記コマンドを実行し、`sqlalchemy` と `aiomysql` をインストールする
     ```bash
-    $ docker-compose exec demo-app poetry add sqlalchemy aiomysql
+    $ docker compose exec demo-app poetry add sqlalchemy aiomysql
     ```
 1. インストールした結果、`pyproject.toml` や `poetry.lock` の中身が変更されていることを確認する
 1. `api/db.py` を作成する
@@ -504,11 +507,11 @@ todo-app-py-01
     ```
 1. 下記コマンドでスクリプトを実行し、MySQLにテーブルを作成する
     ```bash
-    $ docker-compose exec demo-app poetry run python -m api.migrate_db
+    $ docker compose exec demo-app poetry run python -m api.migrate_db
     ```
 1. 下記コマンドを実行してMySQLクライアントを起動し、テーブル情報を確認する
     ```bash
-    % docker-compose exec db mysql demo
+    % docker compose exec db mysql demo
     Reading table information for completion of table and column names
     You can turn off this feature to get a quicker startup with -A
 
@@ -789,6 +792,113 @@ todo-app-py-01
 1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
 1. DoneをCreateすることで、完了フラグをtrueにできることを確認する
     [![Image from Gyazo](https://i.gyazo.com/0163575b3a1c0a4a8b1ff7a92179b631.png)](https://gyazo.com/0163575b3a1c0a4a8b1ff7a92179b631)
+
+### ユニットテスト
+1. 下記コマンドを実行し、開発用モードの場合に `pytest-asyncio` をインストールする
+    ```bash
+    $ docker compose exec demo-app poetry add -D pytest-asyncio aiosqlite httpx
+    ```
+1. インストールした結果、`pyproject.toml` や `poetry.lock` の中身が変更されていることを確認する
+1. プロジェクトディレクトリの直下に `tests` ディレクトリを作成する
+1. testsディレクトリ直下に、`__init__.py` を作成する
+1. testsディレクトリ直下に、テストファイル`test_main.py` を作成する
+    ```py:test_main.py
+    import pytest
+    import pytest_asyncio
+    from httpx import AsyncClient, ASGITransport
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+
+    from api.db import get_db, Base
+    from api.main import app
+
+    import starlette.status
+
+    ASYNC_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+
+    @pytest_asyncio.fixture
+    async def async_client() -> AsyncClient:
+        # Async用のengineとsessionを作成
+        async_engine = create_async_engine(ASYNC_DB_URL, echo=True)
+        async_session = sessionmaker(
+            autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
+        )
+
+        # テスト用にオンメモリのSQLiteテーブルを初期化（関数ごとにリセット）
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
+        # DIを使ってFastAPIのDBの向き先をテスト用DBに変更
+        async def get_test_db():
+            async with async_session() as session:
+                yield session
+
+        app.dependency_overrides[get_db] = get_test_db
+
+        # テスト用に非同期HTTPクライアントを返却
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            yield client
+
+    @pytest.mark.asyncio
+    async def test_create_and_read(async_client):
+        response = await async_client.post("/tasks", json={"title": "テストタスク"})
+        assert response.status_code == starlette.status.HTTP_200_OK
+        response_obj = response.json()
+        assert response_obj["title"] == "テストタスク"
+
+        response = await async_client.get("/tasks")
+        assert response.status_code == starlette.status.HTTP_200_OK
+        response_obj = response.json()
+        assert len(response_obj) == 1
+        assert response_obj[0]["title"] == "テストタスク"
+        assert response_obj[0]["done"] is False
+
+    @pytest.mark.asyncio
+    async def test_done_flag(async_client):
+        response = await async_client.post("/tasks", json={"title": "テストタスク2"})
+        assert response.status_code == starlette.status.HTTP_200_OK
+        response_obj = response.json()
+        assert response_obj["title"] == "テストタスク2"
+
+        # 完了フラグを立てる
+        response = await async_client.put("/tasks/1/done")
+        assert response.status_code == starlette.status.HTTP_200_OK
+
+        # 既に完了フラグが立っているので400を返却
+        response = await async_client.put("/tasks/1/done")
+        assert response.status_code == starlette.status.HTTP_400_BAD_REQUEST
+
+        # 完了フラグを外す
+        response = await async_client.delete("/tasks/1/done")
+        assert response.status_code == starlette.status.HTTP_200_OK
+
+        # 既に完了フラグが外れているので404を返却
+        response = await async_client.delete("/tasks/1/done")
+        assert response.status_code == starlette.status.HTTP_404_NOT_FOUND
+    ```
+1. 下記コマンドを実行し、テストを行う
+    ```bash
+    $ docker compose run --entrypoint "poetry run pytest" demo-app
+    ```
+1. テストが成功したことを確認する
+    ```bash
+    ============================= test session starts ==============================
+    platform linux -- Python 3.11.15, pytest-9.1.0, pluggy-1.6.0
+    rootdir: /src
+    …
+    ======================== 2 passed, 8 warnings in 1.62s =========================
+    ```
+
+### サーバー停止
+1. 下記コマンドを実行し、サーバーを停止する
+    ```bash
+    $ docker compose down
+    ```
 
 ## 補足説明
 ### Docker関連ファイル
