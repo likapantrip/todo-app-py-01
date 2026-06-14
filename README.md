@@ -24,7 +24,13 @@ todo-app-py-01
 ├─ /.venv              # ローカル環境の仮想環境
 ├─ api
 │   ├─ __init__.py
+│   ├─ db.py
 │   ├─ main.py
+│   ├─ migrate_db.py
+│   ├─ cruds
+│   │   ├─ __init__.py
+│   │   ├─ done.py
+│   │   └─ task.py
 │   ├─ models
 │   │   ├─ __init__.py
 │   │   └─ task.py
@@ -530,6 +536,259 @@ todo-app-py-01
     mysql> exit
     Bye
     ```
+
+### CRUDs実装
+1. apiディレクトリに `cruds/__init__.py` を作成する
+1. apiディレクトリに `cruds/task.py` を作成する
+    ```py:task.py
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    import api.models.task as task_model
+    import api.schemas.task as task_schema
+
+
+    async def create_task(
+        # DBセッションとタスク作成用のスキーマオブジェクトを受け取る
+        db: AsyncSession, task_create: task_schema.TaskCreate
+    ) -> task_model.Task:
+        # スキーマのデータ(task_create)を使い、DBモデル(Task)のインスタンスを作成する
+        task = task_model.Task(**task_create.dict())
+        # セッションにtaskを追加する（まだDBには保存されていない）
+        db.add(task)
+        # トランザクションをコミットし、DBへ保存する
+        await db.commit()
+        # 自動採番されたidなどをオブジェクトへ反映するため、DBから最新状態を再取得する
+        await db.refresh(task)
+        # 作成したタスクを返す
+        return task
+    ```
+1. `routers/task.py` を編集する
+    ```py:task.py
+    from fastapi import APIRouter, Depends
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from typing import List
+
+    import api.schemas.task as task_schema
+    import api.cruds.task as task_crud
+    from api.db import get_db
+
+    # FastAPIでAPIのルーティング（URLと処理の対応付け）をまとめるためのオブジェクトを作成する。
+    router = APIRouter()
+
+
+    @router.get("/tasks", response_model=List[task_schema.Task])
+    async def list_tasks():
+        return [task_schema.Task(id=1, title="1つ目のTODOタスク")]
+
+
+    @router.post("/tasks", response_model=task_schema.TaskCreateResponse)
+    async def create_task(
+        task_body: task_schema.TaskCreate, db: AsyncSession = Depends(get_db)
+    ):
+        return await task_crud.create_task(db, task_body)
+
+
+    @router.put("/tasks/{task_id}", response_model=task_schema.TaskCreateResponse)
+    async def update_task(task_id: int, task_body: task_schema.TaskCreate):
+        return task_schema.TaskCreateResponse(id=task_id, **task_body.dict())
+
+
+    @router.delete("/tasks/{task_id}", response_model=None)
+    async def delete_task(task_id: int):
+        return
+    ```
+1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
+1. POSTの「Execute」をクリックするたびに、`id` がインクリメントされて結果が返ることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/c871aa6b324c697372844412083076fa.gif)](https://gyazo.com/c871aa6b324c697372844412083076fa)
+1. `cruds/task.py` を編集する
+    ```py:task.py
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from typing import List, Tuple, Optional
+    from sqlalchemy import select
+    from sqlalchemy.engine import Result
+
+    import api.models.task as task_model
+    import api.schemas.task as task_schema
+
+
+    async def create_task(
+        # DBセッションとタスク作成用のスキーマオブジェクトを受け取る
+        db: AsyncSession, task_create: task_schema.TaskCreate
+    ) -> task_model.Task:
+        # スキーマのデータ(task_create)を使い、DBモデル(Task)のインスタンスを作成する
+        task = task_model.Task(**task_create.dict())
+        # セッションにtaskを追加する（まだDBには保存されていない）
+        db.add(task)
+        # トランザクションをコミットし、DBへ保存する
+        await db.commit()
+        # 自動採番されたidなどをオブジェクトへ反映するため、DBから最新状態を再取得する
+        await db.refresh(task)
+        # 作成したタスクを返す
+        return task
+
+    async def get_tasks_with_done(db: AsyncSession) -> List[Tuple[int, str, bool]]:
+        result: Result = await (
+            db.execute(
+                select(
+                    task_model.Task.id,
+                    task_model.Task.title,
+                    task_model.Done.id.isnot(None).label("done"),
+                ).outerjoin(task_model.Done)
+            )
+        )
+        return result.all()
+
+    async def get_task(db: AsyncSession, task_id: int) -> Optional[task_model.Task]:
+        result: Result = await db.execute(
+            select(task_model.Task).filter(task_model.Task.id == task_id)
+        )
+        task: Optional[Tuple[task_model.Task]] = result.first()
+        return task[0] if task is not None else None  # 要素が一つであってもtupleで返却されるので１つ目の要素を取り出す
+
+
+    async def update_task(
+        db: AsyncSession, task_create: task_schema.TaskCreate, original: task_model.Task
+    ) -> task_model.Task:
+        original.title = task_create.title
+        db.add(original)
+        await db.commit()
+        await db.refresh(original)
+        return original
+
+    async def delete_task(db: AsyncSession, original: task_model.Task) -> None:
+        await db.delete(original)
+        await db.commit()
+    ```
+1. `router/task.py` を編集する
+    ```py:task.py
+    from fastapi import APIRouter, Depends, HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from typing import List
+
+    import api.schemas.task as task_schema
+    import api.cruds.task as task_crud
+    from api.db import get_db
+
+    # FastAPIでAPIのルーティング（URLと処理の対応付け）をまとめるためのオブジェクトを作成する。
+    router = APIRouter()
+
+
+    @router.get("/tasks", response_model=List[task_schema.Task])
+    async def list_tasks(db: AsyncSession = Depends(get_db)):
+        return await task_crud.get_tasks_with_done(db)
+
+
+    @router.post("/tasks", response_model=task_schema.TaskCreateResponse)
+    async def create_task(
+        task_body: task_schema.TaskCreate, db: AsyncSession = Depends(get_db)
+    ):
+        return await task_crud.create_task(db, task_body)
+
+
+    @router.put("/tasks/{task_id}", response_model=task_schema.TaskCreateResponse)
+    async def update_task(
+        task_id: int, task_body: task_schema.TaskCreate, db: AsyncSession = Depends(get_db)
+    ):
+        task = await task_crud.get_task(db, task_id=task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        return await task_crud.update_task(db, task_body, original=task)
+
+
+    @router.delete("/tasks/{task_id}", response_model=None)
+    async def delete_task(task_id: int, db: AsyncSession = Depends(get_db)):
+        task = await task_crud.get_task(db, task_id=task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        return await task_crud.delete_task(db, original=task)
+    ```
+1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
+1. Createした回数のTODOタスクが作成されていることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/c2d1dbfdf26c032685a91211c118fbf0.png)](https://gyazo.com/c2d1dbfdf26c032685a91211c118fbf0)
+1. TODOタスクのtitleが更新できることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/7fbe85c2cb43f770202d21145d935009.gif)](https://gyazo.com/7fbe85c2cb43f770202d21145d935009)
+    [![Image from Gyazo](https://i.gyazo.com/56ed8336e60109c344985b6be52c9849.png)](https://gyazo.com/56ed8336e60109c344985b6be52c9849)
+1. TODOタスクが削除できることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/9439411464e91435a931fade5802c0a1.gif)](https://gyazo.com/9439411464e91435a931fade5802c0a1)
+    [![Image from Gyazo](https://i.gyazo.com/091afe5482ca076c00748f267d83a214.png)](https://gyazo.com/091afe5482ca076c00748f267d83a214)
+1. apiディレクトリに `cruds/done.py` を作成する
+    ```py:done.py
+    from typing import Tuple, Optional
+
+    from sqlalchemy import select
+    from sqlalchemy.engine import Result
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    import api.models.task as task_model
+
+
+    async def get_done(db: AsyncSession, task_id: int) -> Optional[task_model.Done]:
+        result: Result = await db.execute(
+            select(task_model.Done).filter(task_model.Done.id == task_id)
+        )
+        done: Optional[Tuple[task_model.Done]] = result.first()
+        return done[0] if done is not None else None  # 要素が一つであってもtupleで返却されるので１つ目の要素を取り出す
+
+
+    async def create_done(db: AsyncSession, task_id: int) -> task_model.Done:
+        done = task_model.Done(id=task_id)
+        db.add(done)
+        await db.commit()
+        await db.refresh(done)
+        return done
+
+
+    async def delete_done(db: AsyncSession, original: task_model.Done) -> None:
+        await db.delete(original)
+        await db.commit()
+    ```
+1. `routers/done.py` を編集する
+    ```done.py
+    from fastapi import APIRouter, HTTPException, Depends
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    import api.schemas.done as done_schema
+    import api.cruds.done as done_crud
+    from api.db import get_db
+
+
+    # FastAPIでAPIのルーティング（URLと処理の対応付け）をまとめるためのオブジェクトを作成する。
+    router = APIRouter()
+
+
+    @router.put("/tasks/{task_id}/done", response_model=done_schema.DoneResponse)
+    async def mark_task_as_done(task_id: int, db: AsyncSession = Depends(get_db)):
+        done = await done_crud.get_done(db, task_id=task_id)
+        if done is not None:
+            raise HTTPException(status_code=400, detail="Done already exists")
+
+        return await done_crud.create_done(db, task_id)
+
+
+    @router.delete("/tasks/{task_id}/done", response_model=None)
+    async def unmark_task_as_done(task_id: int, db: AsyncSession = Depends(get_db)):
+        done = await done_crud.get_done(db, task_id=task_id)
+        if done is None:
+            raise HTTPException(status_code=404, detail="Done not found")
+
+        return await done_crud.delete_done(db, original=done)
+    ```
+1. apiディレクトリに `schemas/done.py` を作成する
+    ```py:done.py
+    from pydantic import BaseModel
+
+
+    class DoneResponse(BaseModel):
+        id: int
+
+        class Config:
+            orm_mode = True
+    ```
+1. ブラウザで[http://localhost:8000/docs](http://localhost:8000/docs)にアクセスする
+1. DoneをCreateすることで、完了フラグをtrueにできることを確認する
+    [![Image from Gyazo](https://i.gyazo.com/0163575b3a1c0a4a8b1ff7a92179b631.png)](https://gyazo.com/0163575b3a1c0a4a8b1ff7a92179b631)
 
 ## 補足説明
 ### Docker関連ファイル
