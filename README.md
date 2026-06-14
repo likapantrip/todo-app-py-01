@@ -27,7 +27,6 @@ todo-app-py-01
 │   ├─ main.py
 │   ├─ models
 │   │   ├─ __init__.py
-│   │   ├─ done.py
 │   │   └─ task.py
 │   ├─ routers
 │   │   ├─ __init__.py
