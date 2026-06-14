@@ -25,6 +25,9 @@ todo-app-py-01
 ├─ api
 │   ├─ __init__.py
 │   ├─ main.py
+│   ├─ models
+│   │   ├─ __init__.py
+│   │   └─ task.py
 │   ├─ routers
 │   │   ├─ __init__.py
 │   │   ├─ done.py
@@ -40,6 +43,18 @@ todo-app-py-01
 ├─ pyproject.toml
 └─ README.md
 ```
+
+## テーブル設計
+### tasks
+|カラム名|Type|備考|
+|-|-|-|
+|id|INT|primary, auto increment|
+|title|VARCHAR(1024)||
+
+### dones
+|カラム名|Type|備考|
+|-|-|-|
+|id|INT|primary, auto increment, foreign key(task.id)|
 
 ## 手順
 ### Docker環境を構築
@@ -358,6 +373,7 @@ todo-app-py-01
     async def unmark_task_as_done(task_id: int):
         return
     ```
+
 ### DB接続
 1. `docker-compose.yaml` を編集する
     ```docker-compose.yaml
@@ -409,6 +425,110 @@ todo-app-py-01
     Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
 
     mysql>
+    ```
+1. 下記コマンドを実行し、`sqlalchemy` と `aiomysql` をインストールする
+    ```bash
+    $ docker-compose exec demo-app poetry add sqlalchemy aiomysql
+    ```
+1. インストールした結果、`pyproject.toml` や `poetry.lock` の中身が変更されていることを確認する
+1. `api/db.py` を作成する
+    ```py:db.py
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker, declarative_base
+
+    # MySQLのdockerコンテナに対して接続するセッションを作成
+    ASYNC_DB_URL = "mysql+aiomysql://root@db:3306/demo?charset=utf8"
+
+    async_engine = create_async_engine(ASYNC_DB_URL, echo=True)
+    async_session = sessionmaker(
+        autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
+    )
+
+    Base = declarative_base()
+
+    # データベースセッションを取得するための依存関係
+    async def get_db():
+        async with async_session() as session:
+            yield session
+    ```
+
+### DBモデル実装
+1. `api/models/__init__.py` を作成する
+1. `api/models/task.py` を作成する
+    ```py:task.py
+    from sqlalchemy import Column, Integer, String, ForeignKey
+    from sqlalchemy.orm import relationship
+
+    from api.db import Base
+
+
+    class Task(Base):
+        __tablename__ = "tasks"
+
+        id = Column(Integer, primary_key=True)
+        title = Column(String(1024))
+
+        done = relationship("Done", back_populates="task", cascade="delete")
+
+
+    class Done(Base):
+        __tablename__ = "dones"
+
+        id = Column(Integer, ForeignKey("tasks.id"), primary_key=True)
+
+        task = relationship("Task", back_populates="done")
+    ```
+1. DBマイグレーション用のスクリプト `api/migrate_db.py` を作成する
+    ```py:migrate_db.py
+    from sqlalchemy import create_engine
+
+    from api.models.task import Base
+
+    DB_URL = "mysql+pymysql://root@db:3306/demo?charset=utf8"
+    engine = create_engine(DB_URL, echo=True)
+
+
+    def reset_database():
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+
+    if __name__ == "__main__":
+        reset_database()
+    ```
+1. 下記コマンドでスクリプトを実行し、MySQLにテーブルを作成する
+    ```bash
+    $ docker-compose exec demo-app poetry run python -m api.migrate_db
+    ```
+1. 下記コマンドを実行してMySQLクライアントを起動し、テーブル情報を確認する
+    ```bash
+    % docker-compose exec db mysql demo
+    Reading table information for completion of table and column names
+    You can turn off this feature to get a quicker startup with -A
+
+    Welcome to the MySQL monitor.  Commands end with ; or \g.
+    Your MySQL connection id is 10
+    Server version: 8.0.46 MySQL Community Server - GPL
+
+    Copyright (c) 2000, 2026, Oracle and/or its affiliates.
+
+    Oracle is a registered trademark of Oracle Corporation and/or its
+    affiliates. Other names may be trademarks of their respective
+    owners.
+
+    Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+    mysql> SHOW TABLES;
+    +----------------+
+    | Tables_in_demo |
+    +----------------+
+    | dones          |
+    | tasks          |
+    +----------------+
+    2 rows in set (0.00 sec)
+
+    mysql> exit
+    Bye
     ```
 
 ## 補足説明
