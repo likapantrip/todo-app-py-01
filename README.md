@@ -358,6 +358,58 @@ todo-app-py-01
     async def unmark_task_as_done(task_id: int):
         return
     ```
+### DB接続
+1. `docker-compose.yaml` を編集する
+    ```docker-compose.yaml
+    services:                      # 起動するコンテナの一覧を定義
+    demo-app:                    # サービス名(コンテナを識別する名前)
+        build: .                   # カレントディレクトリのDockerfileを使ってイメージを作成 (.は、カレントディレクトリ)
+        volumes:                   # ホスト(PC)とコンテナの間でファイルを共有(同期)する設定
+        - .dockervenv:/src/.venv # ホストマシンの .dockervenv を、コンテナ内の /src/.venv と同期
+        - .:/src                 # ホストマシンのカレントディレクトリ全体をコンテナの /src と同期
+        ports:                     # ホストマシンとコンテナの間でポートを接続するための設定
+        - 8000:8000              # localhost:8000 へのアクセスを、コンテナの8000番ポートへ転送
+    db:
+        image: mysql:8.0
+        platform: linux/x86_64               # M1 Macの場合必要
+        environment:
+        MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'  # rootアカウントをパスワードなしで作成
+        MYSQL_DATABASE: 'demo'             # 初期データベースとしてdemoを設定
+        TZ: 'Asia/Tokyo'                   # タイムゾーンを日本時間に設定
+        volumes:
+        - mysql_data:/var/lib/mysql
+        command: --default-authentication-plugin=mysql_native_password  # MySQL8.0ではデフォルトが"caching_sha2_password"で、ドライバが非対応のため変更
+        ports:
+        - 33306:3306  # ホストマシンのポート33306を、docker内のポート3306に接続する
+    volumes:
+    mysql_data:
+    ```
+1. 下記コマンドを実行し、サーバーを停止する
+    ```bash
+    $ docker compose down
+    ```
+1. 下記コマンドを実行し、サーバーとSQLを同時に立ち上げる
+    ```bash
+    $ docker compose up
+    ```
+1. 別のコンソールを開く
+1. プロジェクトディレクトリで下記コマンドを実行し、MySQLクライアントが実行されて、DBに接続できていることを確認する
+    ```bash
+    % docker-compose exec db mysql demo
+    Welcome to the MySQL monitor.  Commands end with ; or \g.
+    Your MySQL connection id is 8
+    Server version: 8.0.46 MySQL Community Server - GPL
+
+    Copyright (c) 2000, 2026, Oracle and/or its affiliates.
+
+    Oracle is a registered trademark of Oracle Corporation and/or its
+    affiliates. Other names may be trademarks of their respective
+    owners.
+
+    Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+    mysql>
+    ```
 
 ## 補足説明
 ### Docker関連ファイル
